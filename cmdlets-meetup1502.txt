@@ -1,0 +1,24 @@
+$rgName = 'meetup-0702-rg'
+$acrName = 'demoacr'
+
+$registry = New-AzureRmContainerRegistry -ResourceGroupName $rgName -Name $acrName -EnableAdminUser -Sku Basic
+$credentials = Get-AzureRmContainerRegistryCredential -Registry $registry
+docker login $registry.LoginServer -u $credentials.Username -p $credentials.Password
+
+docker build -t sample-web-app .\WebApp\
+docker build -t sample-tasks .\ContainerizedTasks\
+
+docker tag sample-web-app ($registry.LoginServer + '/sample-web-app:v1')
+docker tag sample-tasks ($registry.LoginServer + '/sample-tasks:v1')
+
+docker push ($registry.LoginServer + '/sample-web-app:v1')
+docker push ($registry.LoginServer + '/sample-tasks:v1')
+
+New-AzureRmStorageAccount -ResourceGroupName $rgName -Name 'demomeetup0702' -SkuName Standard_LRS -Location 'West Europe' -Kind Storage
+$storageKeys = Get-AzureRmStorageAccountKey -ResourceGroupName $rgName -Name 'demomeetup0702'
+
+New-AzureRmResourceGroupDeployment -Name 'init-linux-app' -ResourceGroupName $rgName -TemplateFile .\WebApp\deploy-web-app.json
+
+$securedPassword = ConvertTo-SecureString $credentials.Password -AsPlainText -Force
+$psCreds = New-Object System.Management.Automation.PSCredential($credentials.Username, $securedPassword)
+New-AzureRmContainerGroup -ResourceGroupName $rgName -Name 'demomeetup0702' -Image ($registry.LoginServer + '/sample-tasks:v1') -RegistryCredential $psCreds -Location 'West Europe' -RestartPolicy OnFailure -EnvironmentVariable @{"AzureStorageName"="demomeetup0702";"AzureStorageKey"=$storageKeys[0].Value;}
